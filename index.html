@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>parkrun weather finish time predictor</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --card: #f5f5f7;
+    --border: #e2e2e6;
+    --accent: #ff4b4b;
+    --accent-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1117;
+      --fg: #fafafa;
+      --muted: #9aa0a6;
+      --card: #1c1f26;
+      --border: #2a2e37;
+      --accent: #ff4b4b;
+      --accent-fg: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .container {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+  h1 {
+    font-size: 1.6rem;
+    margin: 0 0 8px;
+  }
+  .caption {
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 24px;
+  }
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+  }
+  input[type="text"], input[type="date"], select {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--fg);
+    margin-bottom: 16px;
+  }
+  details {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    background: var(--card);
+  }
+  details summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  details[open] summary {
+    margin-bottom: 12px;
+  }
+  .help {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin: -10px 0 16px;
+  }
+  button {
+    width: 100%;
+    padding: 14px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent-fg);
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:active { opacity: 0.85; }
+  .result {
+    margin-top: 28px;
+    display: none;
+  }
+  .result.visible { display: block; }
+  .predicted-time {
+    font-size: 2.4rem;
+    font-weight: 700;
+    margin: 4px 0;
+  }
+  .predicted-label {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .delta {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .delta.slower { background: #fde2e2; color: #b3261e; }
+  .delta.faster { background: #dcf5e3; color: #1e7a34; }
+  @media (prefers-color-scheme: dark) {
+    .delta.slower { background: #3a1f1f; color: #ff8a80; }
+    .delta.faster { background: #16321f; color: #7be495; }
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 0.95rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .weather-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 8px;
+  }
+  .weather-tile .value {
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+  .weather-tile .label {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .error {
+    color: #b3261e;
+    background: #fde2e2;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 16px;
+    display: none;
+  }
+  .error.visible { display: block; }
+  @media (prefers-color-scheme: dark) {
+    .error { background: #3a1f1f; color: #ff8a80; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🏃 parkrun weather finish time predictor</h1>
+  <p class="caption">
+    Estimates how much faster or slower you might run at 9am based on forecast weather
+    and general sports-science trends for endurance running. This is a general-purpose
+    heuristic, not trained on any specific parkrun's own results (that data isn't open
+    to reuse) — see the comments in the JavaScript below for the assumptions behind
+    the estimate.
+  </p>
+
+  <label for="avg">Your average parkrun time (mm:ss)</label>
+  <input type="text" id="avg" value="22:15" inputmode="numeric" placeholder="22:15">
+
+  <details>
+    <summary>Course &amp; weather details (optional)</summary>
+    <label for="exposure">How exposed is the course to wind?</label>
+    <select id="exposure">
+      <option value="exposed" selected>Exposed (open, riverside/coastal)</option>
+      <option value="sheltered">Sheltered (wooded/urban)</option>
+    </select>
+    <label for="surface">Surface</label>
+    <select id="surface">
+      <option value="towpath" selected>Grass / gravel / towpath</option>
+      <option value="tarmac">Tarmac / paved</option>
+    </select>
+    <label for="rundate">Run date</label>
+    <input type="date" id="rundate">
+  </details>
+
+  <button id="predictBtn">Predict finish time</button>
+
+  <div class="error" id="errorBox"></div>
+
+  <div class="result" id="result">
+    <div class="predicted-label" id="predictedLabel">Predicted finish</div>
+    <div class="predicted-time" id="predictedTime">--:--</div>
+    <span class="delta" id="deltaBadge"></span>
+
+    <h3>Breakdown of the weather effect</h3>
+    <table>
+      <thead><tr><th>Factor</th><th>Effect on pace</th></tr></thead>
+      <tbody id="breakdownBody"></tbody>
+    </table>
+
+    <h3 id="weatherHeading">9am weather used</h3>
+    <div class="weather-grid">
+      <div class="weather-tile"><div class="value" id="wTemp">-</div><div class="label">Temperature</div></div>
+      <div class="weather-tile"><div class="value" id="wHumidity">-</div><div class="label">Humidity</div></div>
+      <div class="weather-tile"><div class="value" id="wWind">-</div><div class="label">Wind</div></div>
+      <div class="weather-tile"><div class="value" id="wRain">-</div><div class="label">Rain</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Fixed location (Exeter Riverside parkrun). Change LAT/LON to point this at a
+// different parkrun course.
+const LAT = 50.7236;
+const LON = -3.5275;
+const PARKRUN_HOUR = 9;
+
+function parseMMSS(text) {
+  text = text.trim();
+  if (text.includes(':')) {
+    const [m, s] = text.split(':');
+    return parseInt(m, 10) * 60 + parseFloat(s);
+  }
+  return parseFloat(text);
+}
+
+function formatMMSS(seconds) {
+  seconds = Math.round(seconds);
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/*
+ * Heuristic weather-adjustment model for 5km parkrun finish times.
+ * Not trained on parkrun's own results (that data isn't open to reuse) —
+ * this encodes general, well-established sports-science trends instead:
+ *   - Performance is best in a cool ~8-14C band; heat above that impairs
+ *     thermoregulation. The effect is proportionally smaller for a 5km
+ *     effort than for a marathon, since there's far less time to accumulate
+ *     heat stress.
+ *   - High humidity compounds heat stress once it's warm enough to matter.
+ *   - Wind has an asymmetric cost: headwind costs more time than tailwind
+ *     saves, so any wind is a net negative.
+ *   - Rain reduces grip, more so on grass/gravel/towpath than tarmac.
+ * Coefficients are conservative, round-number approximations of published
+ * trends, not fitted statistics — treat outputs as an informed estimate.
+ */
+function computeWeatherEffect(tempC, humidityPct, windKmh, precipMm, exposure, surface) {
+  let tempPct = 0;
+  if (tempC > 14) {
+    tempPct = 0.4 * (tempC - 14);
+    if (tempC > 22) tempPct += 0.3 * (tempC - 22);
+  } else if (tempC < 5) {
+    tempPct = 0.15 * (5 - tempC);
+  }
+
+  let humidityEffect = 0;
+  if (tempC > 18 && humidityPct > 60) {
+    humidityEffect = 0.05 * (humidityPct - 60);
+  }
+
+  const windFactor = exposure === 'exposed' ? 0.08 : 0.04;
+  const windEffect = windFactor * windKmh;
+
+  let rainEffect = 0;
+  if (precipMm > 0) {
+    const base = surface === 'towpath' ? 1.0 : 0.4;
+    rainEffect = Math.min(base + 0.2 * precipMm, base * 2.5);
+  }
+
+  return {
+    temperature: round2(tempPct),
+    humidity: round2(humidityEffect),
+    wind: round2(windEffect),
+    rain: round2(rainEffect),
+  };
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function totalPct(effect) {
+  return effect.temperature + effect.humidity + effect.wind + effect.rain;
+}
+
+async function fetchWeatherAt9am(targetDateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(targetDateStr + 'T00:00:00');
+  const isPast = target < today;
+
+  const base = isPast
+    ? 'https://archive-api.open-meteo.com/v1/archive'
+    : 'https://api.open-meteo.com/v1/forecast';
+
+  let url = `${base}?latitude=${LAT}&longitude=${LON}` +
+    `&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m` +
+    `&timezone=Europe%2FLondon`;
+
+  if (isPast) {
+    url += `&start_date=${targetDateStr}&end_date=${targetDateStr}`;
+  } else {
+    url += `&forecast_days=7`;
+  }
+
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Weather service returned ${resp.status}`);
+  const data = await resp.json();
+
+  const targetPrefix = `${targetDateStr}T${String(PARKRUN_HOUR).padStart(2, '0')}:00`;
+  const idx = data.hourly.time.indexOf(targetPrefix);
+  if (idx === -1) throw new Error(`No weather data available for ${targetPrefix}`);
+
+  return {
+    temperature_c: data.hourly.temperature_2m[idx],
+    humidity_pct: data.hourly.relative_humidity_2m[idx],
+    precipitation_mm: data.hourly.precipitation[idx],
+    wind_speed_kmh: data.hourly.wind_speed_10m[idx],
+  };
+}
+
+function showError(msg) {
+  const box = document.getElementById('errorBox');
+  box.textContent = msg;
+  box.classList.add('visible');
+  document.getElementById('result').classList.remove('visible');
+}
+
+function clearError() {
+  document.getElementById('errorBox').classList.remove('visible');
+}
+
+document.getElementById('rundate').valueAsDate = new Date();
+
+document.getElementById('predictBtn').addEventListener('click', async () => {
+  clearError();
+  const avgText = document.getElementById('avg').value;
+  const exposure = document.getElementById('exposure').value;
+  const surface = document.getElementById('surface').value;
+  const dateStr = document.getElementById('rundate').value;
+
+  let avgSec;
+  try {
+    avgSec = parseMMSS(avgText);
+    if (isNaN(avgSec) || avgSec <= 0) throw new Error();
+  } catch {
+    showError('Times must be in mm:ss format, e.g. 22:15');
+    return;
+  }
+
+  const btn = document.getElementById('predictBtn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching weather…';
+
+  try {
+    const weather = await fetchWeatherAt9am(dateStr);
+    const effect = computeWeatherEffect(
+      weather.temperature_c, weather.humidity_pct,
+      weather.wind_speed_kmh, weather.precipitation_mm,
+      exposure, surface
+    );
+    const pct = totalPct(effect);
+    const predictedSec = avgSec * (1 + pct / 100);
+
+    const slower = pct >= 0;
+    document.getElementById('predictedLabel').textContent =
+      `Predicted finish (${slower ? 'slower' : 'faster'} than your average)`;
+    document.getElementById('predictedTime').textContent = formatMMSS(predictedSec);
+    const badge = document.getElementById('deltaBadge');
+    badge.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    badge.className = 'delta ' + (slower ? 'slower' : 'faster');
+
+    const rows = [
+      ['Temperature', effect.temperature],
+      ['Humidity', effect.humidity],
+      ['Wind', effect.wind],
+      ['Rain/surface', effect.rain],
+    ];
+    document.getElementById('breakdownBody').innerHTML = rows.map(
+      ([name, val]) => `<tr><td>${name}</td><td>${val >= 0 ? '+' : ''}${val.toFixed(2)}%</td></tr>`
+    ).join('');
+
+    document.getElementById('weatherHeading').textContent = `9am weather used (${dateStr})`;
+    document.getElementById('wTemp').textContent = `${Math.round(weather.temperature_c)}°C`;
+    document.getElementById('wHumidity').textContent = `${Math.round(weather.humidity_pct)}%`;
+    document.getElementById('wWind').textContent = `${Math.round(weather.wind_speed_kmh)} km/h`;
+    document.getElementById('wRain').textContent = `${weather.precipitation_mm.toFixed(1)} mm`;
+
+    document.getElementById('result').classList.add('visible');
+  } catch (e) {
+    showError(`Couldn't fetch weather: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Predict finish time';
+  }
+});
+</script>
+</body>
+</html>
