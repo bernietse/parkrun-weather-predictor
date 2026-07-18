@@ -123,6 +123,20 @@
     .delta.slower { background: #3a1f1f; color: #ff8a80; }
     .delta.faster { background: #16321f; color: #7be495; }
   }
+  .encourage {
+    display: none;
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: #dcf5e3;
+    color: #1e7a34;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .encourage.visible { display: block; }
+  @media (prefers-color-scheme: dark) {
+    .encourage { background: #16321f; color: #7be495; }
+  }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -174,7 +188,7 @@
   </p>
 
   <label for="avg">Your average parkrun time (mm:ss)</label>
-  <input type="text" id="avg" value="22:15" inputmode="numeric" placeholder="22:15">
+  <input type="text" id="avg" value="25:00" inputmode="numeric" placeholder="22:15">
 
   <details>
     <summary>Course &amp; weather details (optional)</summary>
@@ -202,6 +216,7 @@
     <div class="predicted-label" id="predictedLabel">Predicted finish</div>
     <div class="predicted-time" id="predictedTime">--:--</div>
     <span class="delta" id="deltaBadge"></span>
+    <p class="encourage" id="encourageMsg"></p>
 
     <h3>Breakdown of the weather effect</h3>
     <table>
@@ -308,6 +323,10 @@ function formatMMSS(seconds) {
  *   - Wind has an asymmetric cost: headwind costs more time than tailwind
  *     saves, so any wind is a net negative.
  *   - Rain reduces grip, more so on grass/gravel/towpath than tarmac.
+ *   - Calm, mild, dry mornings (8-14C, light wind, no rain) get a small
+ *     bonus: a runner's "average" time is usually pulled from a mix of
+ *     conditions, so a genuinely ideal morning should read as a bit
+ *     faster than that all-conditions average, not just "no penalty".
  * Coefficients are conservative, round-number approximations of published
  * trends, not fitted statistics — treat outputs as an informed estimate.
  */
@@ -334,18 +353,24 @@ function computeWeatherEffect(tempC, humidityPct, windKmh, precipMm, exposure, s
     rainEffect = Math.min(base + 0.2 * precipMm, base * 2.5);
   }
 
+  let idealBonus = 0;
+  if (tempC >= 8 && tempC <= 14 && windKmh <= 8 && precipMm === 0) {
+    idealBonus = -1.0;
+  }
+
   return {
     temperature: round2(tempPct),
     humidity: round2(humidityEffect),
     wind: round2(windEffect),
     rain: round2(rainEffect),
+    ideal: round2(idealBonus),
   };
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
 function totalPct(effect) {
-  return effect.temperature + effect.humidity + effect.wind + effect.rain;
+  return effect.temperature + effect.humidity + effect.wind + effect.rain + effect.ideal;
 }
 
 async function fetchWeatherAt9am(targetDateStr, lat, lon) {
@@ -442,11 +467,20 @@ document.getElementById('predictBtn').addEventListener('click', async () => {
     badge.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
     badge.className = 'delta ' + (slower ? 'slower' : 'faster');
 
+    const encourageEl = document.getElementById('encourageMsg');
+    if (!slower) {
+      encourageEl.textContent = `Conditions look ideal today — ${Math.abs(pct).toFixed(1)}% faster than your average. Go for a personal best!`;
+      encourageEl.classList.add('visible');
+    } else {
+      encourageEl.classList.remove('visible');
+    }
+
     const rows = [
       ['Temperature', effect.temperature],
       ['Humidity', effect.humidity],
       ['Wind', effect.wind],
       ['Rain/surface', effect.rain],
+      ['Ideal conditions bonus', effect.ideal],
     ];
     document.getElementById('breakdownBody').innerHTML = rows.map(
       ([name, val]) => `<tr><td>${name}</td><td>${val >= 0 ? '+' : ''}${val.toFixed(2)}%</td></tr>`
