@@ -312,24 +312,31 @@ function formatMMSS(seconds) {
 }
 
 /*
- * Heuristic weather-adjustment model for 5km parkrun finish times.
+ * Heuristic weather-adjustment model for 5km parkrun finish times, scored
+ * relative to a runner's own "average" time.
+ *
  * Not trained on parkrun's own results (that data isn't open to reuse) —
  * this encodes general, well-established sports-science trends instead:
  *   - Performance is best in a cool ~8-14C band; heat above that impairs
  *     thermoregulation. The effect is proportionally smaller for a 5km
  *     effort than for a marathon, since there's far less time to accumulate
- *     heat stress.
+ *     heat stress. Cold below ~5C carries a smaller penalty too.
  *   - High humidity compounds heat stress once it's warm enough to matter.
- *   - Wind has an asymmetric cost: headwind costs more time than tailwind
- *     saves, so any wind is a net negative.
- *   - Rain reduces grip, more so on grass/gravel/towpath than tarmac.
- *   - Calm, mild, dry mornings (8-14C, light wind, no rain) get a small
- *     bonus: a runner's "average" time is usually pulled from a mix of
- *     conditions, so a genuinely ideal morning should read as a bit
- *     faster than that all-conditions average, not just "no penalty".
+ *   - Wind is scored against a "typical breezy morning" baseline (12 km/h),
+ *     not against dead calm. A runner's average time already reflects
+ *     mostly-typical weather, so only wind that's calmer or windier than
+ *     typical should push the prediction faster or slower — scoring
+ *     against zero would mean almost every real day counts as "windy"
+ *     and the model would predict slower-than-average on most days,
+ *     which doesn't match what "average" means.
+ *   - Rain reduces grip, more so on grass/gravel/towpath than tarmac. This
+ *     one stays one-sided (only a penalty, no bonus for dry) since dry
+ *     is already the normal case most days.
  * Coefficients are conservative, round-number approximations of published
  * trends, not fitted statistics — treat outputs as an informed estimate.
  */
+const TYPICAL_WIND_KMH = 12;
+
 function computeWeatherEffect(tempC, humidityPct, windKmh, precipMm, exposure, surface) {
   let tempPct = 0;
   if (tempC > 14) {
@@ -345,7 +352,7 @@ function computeWeatherEffect(tempC, humidityPct, windKmh, precipMm, exposure, s
   }
 
   const windFactor = exposure === 'exposed' ? 0.08 : 0.04;
-  const windEffect = windFactor * windKmh;
+  const windEffect = windFactor * (windKmh - TYPICAL_WIND_KMH);
 
   let rainEffect = 0;
   if (precipMm > 0) {
@@ -353,24 +360,18 @@ function computeWeatherEffect(tempC, humidityPct, windKmh, precipMm, exposure, s
     rainEffect = Math.min(base + 0.2 * precipMm, base * 2.5);
   }
 
-  let idealBonus = 0;
-  if (tempC >= 8 && tempC <= 14 && windKmh <= 8 && precipMm === 0) {
-    idealBonus = -1.0;
-  }
-
   return {
     temperature: round2(tempPct),
     humidity: round2(humidityEffect),
     wind: round2(windEffect),
     rain: round2(rainEffect),
-    ideal: round2(idealBonus),
   };
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
 function totalPct(effect) {
-  return effect.temperature + effect.humidity + effect.wind + effect.rain + effect.ideal;
+  return effect.temperature + effect.humidity + effect.wind + effect.rain;
 }
 
 async function fetchWeatherAt9am(targetDateStr, lat, lon) {
@@ -420,7 +421,20 @@ function clearError() {
   document.getElementById('errorBox').classList.remove('visible');
 }
 
-document.getElementById('rundate').valueAsDate = new Date();
+// parkrun only happens on Saturdays: default to today if it's Saturday,
+// otherwise the upcoming Saturday. Builds a local YYYY-MM-DD string rather
+// than using valueAsDate, which treats the Date as UTC and is off by a day
+// whenever the local timezone is ahead of UTC (e.g. British Summer Time).
+function getUpcomingSaturday() {
+  const d = new Date();
+  const daysUntilSaturday = (6 - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + daysUntilSaturday);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+document.getElementById('rundate').value = getUpcomingSaturday();
 populateCityDropdown();
 
 document.getElementById('avg').addEventListener('input', (e) => {
@@ -480,7 +494,6 @@ document.getElementById('predictBtn').addEventListener('click', async () => {
       ['Humidity', effect.humidity],
       ['Wind', effect.wind],
       ['Rain/surface', effect.rain],
-      ['Ideal conditions bonus', effect.ideal],
     ];
     document.getElementById('breakdownBody').innerHTML = rows.map(
       ([name, val]) => `<tr><td>${name}</td><td>${val >= 0 ? '+' : ''}${val.toFixed(2)}%</td></tr>`
